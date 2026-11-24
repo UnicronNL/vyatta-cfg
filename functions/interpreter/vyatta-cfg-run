@@ -685,6 +685,14 @@ vyatta_cfg_cmd ()
     local editlvl=$(${vyconf_bin_dir}/vyconf_cli_compat getEditLevelStr)
   else
     local editlvl=$(cli-shell-api getEditLevelStr)
+    # a path that is valid as typed expands to itself (an exact node name is
+    # its own expansion, and values are never expanded), so only do the
+    # expansion, which runs cli-shell-api once per word, when it isn't
+    if [[ "${args[$[${#args[@]}-1]]}" != "-all" ]] &&
+       cli-shell-api validateTmplPath -- ${editlvl[*]} "${args[@]:1}"; then
+      vyatta_cfg_cmd_run "${args[@]}"
+      return
+    fi
   fi
   vyatta_config_expand_compwords "${args[@]}"
   if test -f "/var/run/vyconf_backend"; then
