@@ -386,6 +386,8 @@ private:
   StatCacheT _tmpl_stat_cache;
   StatCacheT _cfg_stat_cache;
   unsigned int _read_only_scope_depth = 0;
+  // inSession() found the session inside the current read-only scope
+  bool _in_session_in_scope = false;
   StatCacheT *get_stat_cache(const char *path);
   unsigned int get_path_flags(const char *path);
 

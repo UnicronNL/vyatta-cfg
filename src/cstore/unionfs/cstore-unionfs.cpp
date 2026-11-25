@@ -777,12 +777,21 @@ UnionfsCstore::teardownSession()
 bool
 UnionfsCstore::inSession()
 {
+  /* asked for every node of a tree. being in the session includes holding
+   * its lock, and while that is held the session is neither remounted nor
+   * removed, so within a read-only scope the answer stays. "no" is never
+   * kept: the session may still be set up. */
+  if (_in_session_in_scope) {
+    return true;
+  }
   string wstr = work_root.path_cstr();
-  return (!wstr.empty() && wstr.find(C_DEF_WORK_PREFIX) == 0
+  bool ret = (!wstr.empty() && wstr.find(C_DEF_WORK_PREFIX) == 0
           && path_exists(work_root) && path_is_directory(work_root)
           && session_mounted()
           && path_is_directory((C_DEF_TMP_PREFIX + session_id).c_str())
           && session_locked());
+  _in_session_in_scope = (ret && _read_only_scope_depth > 0);
+  return ret;
 }
 
 
@@ -2740,6 +2749,7 @@ UnionfsCstore::endReadOnlyScope()
 {
   if (_read_only_scope_depth > 0 && --_read_only_scope_depth == 0) {
     _cfg_stat_cache.clear();
+    _in_session_in_scope = false;
   }
 }
 
