@@ -1,3 +1,12 @@
+vyatta-cfg (0.103.0+vyos2) unstable; urgency=medium
+
+  * Stop linking libapt-pkg; carry its version comparison instead.
+  * Don't expand a config path that is already complete.
+  * Cache file status lookups while a config tree is built.
+  * Don't validate a value again when it is known to be valid.
+
+ -- Kim Hagen <kim.sidney@gmail.com>  Wed, 25 Nov 2026 13:28:20 +0100
+
 vyatta-cfg (0.103.0+vyos1) unstable; urgency=medium
 
   * Use kernel overlayfs for config sessions instead of unionfs-fuse. A
