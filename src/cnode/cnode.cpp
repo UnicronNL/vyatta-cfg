@@ -27,6 +27,19 @@
 using namespace cnode;
 using namespace cstore;
 
+namespace {
+// tells the cstore that the config is only being read while this exists
+class ReadOnlyScope {
+public:
+  ReadOnlyScope(Cstore& cstore) : _cstore(cstore) {
+    _cstore.beginReadOnlyScope();
+  }
+  ~ReadOnlyScope() { _cstore.endReadOnlyScope(); }
+private:
+  Cstore& _cstore;
+};
+}
+
 
 ////// constructors/destructors
 // for parser
@@ -135,6 +148,11 @@ CfgNode::CfgNode(Cstore& cstore, Cpath& path_comps, bool active,
     _is_default(false), _is_deactivated(false), _is_leaf_typeless(false),
     _is_invalid(false), _exists(true)
 {
+  /* everything below (including building the child nodes) only reads the
+   * config, and reads about the same paths many times.
+   */
+  ReadOnlyScope read_only(cstore);
+
   /* first get the def (only if path is not empty). if path is empty, i.e.,
    * "root", treat it as an intermediate node.
    */

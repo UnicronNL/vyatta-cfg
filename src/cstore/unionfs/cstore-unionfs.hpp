@@ -50,6 +50,8 @@ public:
   bool setupSession();
   bool teardownSession();
   bool inSession();
+  void beginReadOnlyScope();
+  void endReadOnlyScope();
   bool clearCommittedMarkers();
   bool commitConfig(commit::PrioNode& pnode);
   bool getCommitLock();
@@ -351,6 +353,29 @@ private:
   bool normalize_active_perms(const FsPath& root);
   static FsPath ovl_work_root_for(const string& sid);
   static bool session_id_from_work_root(const FsPath& wroot, string& sid);
+
+  /* cache of file status lookups.
+   *
+   * building a config tree asks about the same paths over and over (e.g.,
+   * the "deactivated" marker of every ancestor for every node, and the
+   * template directories from the root for every node), and each question
+   * is a stat(). two caches avoid repeating them:
+   *   - templates don't change while a command runs, so lookups under the
+   *     template root are cached for the life of the object.
+   *   - config lookups are only cached inside a "read-only scope" (see
+   *     beginReadOnlyScope()), during which this object doesn't change the
+   *     config. the cache is dropped when the outermost scope ends. the
+   *     session lock keeps the session from being remounted meanwhile.
+   * a cached value is a combination of the PATH_* flags.
+   */
+  enum { PATH_EXISTS = 1, PATH_DIRECTORY = 2, PATH_REGULAR = 4 };
+  typedef MapT<string, unsigned int> StatCacheT;
+  static const size_t C_STAT_CACHE_MAX_ENTRIES = 100000;
+  StatCacheT _tmpl_stat_cache;
+  StatCacheT _cfg_stat_cache;
+  unsigned int _read_only_scope_depth = 0;
+  StatCacheT *get_stat_cache(const char *path);
+  unsigned int get_path_flags(const char *path);
 
   bool path_exists(const char *path);
   bool path_exists(const FsPath& path) {

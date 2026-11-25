@@ -171,6 +171,13 @@ public:
   virtual bool setupSession() = 0;
   virtual bool teardownSession() = 0;
   virtual bool inSession() = 0;
+  /* the caller promises not to change the config through this object
+   * between these two calls (they may be nested), which lets an
+   * implementation avoid repeating the same lookups. used while building
+   * config trees, which looks at each path many times.
+   */
+  virtual void beginReadOnlyScope() {};
+  virtual void endReadOnlyScope() {};
   // commit
   bool unmarkCfgPathChanged(const Cpath& path_comps);
   bool executeTmplActions(char *at_str, const Cpath& path,

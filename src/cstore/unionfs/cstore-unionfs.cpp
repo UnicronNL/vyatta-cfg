@@ -2615,46 +2615,80 @@ UnionfsCstore::normalize_active_perms(const FsPath& root)
   return true;
 }
 
-/* query the status of a path without throwing. returns false if the status
- * could not be determined at all; a path that simply does not exist is not
- * an error and yields a "not found" status.
- */
-static bool
-get_file_status(const char *path, fs::file_status& fstat)
+// the cache to use for the status of a path, if any
+UnionfsCstore::StatCacheT *
+UnionfsCstore::get_stat_cache(const char *path)
 {
+  const char *troot = tmpl_root.path_cstr();
+  size_t tlen = tmpl_root.length();
+  if (tlen > 0 && strncmp(path, troot, tlen) == 0
+      && (path[tlen] == '/' || path[tlen] == 0)) {
+    return &_tmpl_stat_cache;
+  }
+  return ((_read_only_scope_depth > 0) ? &_cfg_stat_cache : NULL);
+}
+
+/* query the status of a path without throwing. a status that cannot be
+ * determined yields no flags at all, as does a path that does not exist.
+ */
+unsigned int
+UnionfsCstore::get_path_flags(const char *path)
+{
+  StatCacheT *cache = get_stat_cache(path);
+  if (cache) {
+    StatCacheT::iterator p = cache->find(path);
+    if (p != cache->end()) {
+      return p->second;
+    }
+  }
+  unsigned int flags = 0;
   std::error_code ec;
-  fstat = fs::status(path, ec);
-  return (!ec);
+  fs::file_status st = fs::status(path, ec);
+  if (!ec) {
+    flags |= (fs::exists(st) ? PATH_EXISTS : 0);
+    flags |= (fs::is_directory(st) ? PATH_DIRECTORY : 0);
+    flags |= (fs::is_regular_file(st) ? PATH_REGULAR : 0);
+  }
+  if (cache) {
+    if (cache->size() >= C_STAT_CACHE_MAX_ENTRIES) {
+      // keep memory bounded for very large configs
+      cache->clear();
+    }
+    (*cache)[path] = flags;
+  }
+  return flags;
+}
+
+void
+UnionfsCstore::beginReadOnlyScope()
+{
+  ++_read_only_scope_depth;
+}
+
+void
+UnionfsCstore::endReadOnlyScope()
+{
+  if (_read_only_scope_depth > 0 && --_read_only_scope_depth == 0) {
+    _cfg_stat_cache.clear();
+  }
 }
 
 bool
 UnionfsCstore::path_exists(const char *path)
 {
-  fs::file_status result;
-  if (!get_file_status(path, result)) {
-    return false;
-  }
-  return fs::exists(result);
+  return (get_path_flags(path) & PATH_EXISTS);
 }
 
 bool
 UnionfsCstore::path_is_directory(const char *path)
 {
-  fs::file_status result;
-  if (!get_file_status(path, result)) {
-    return false;
-  }
-  return fs::is_directory(result);
+  return (get_path_flags(path) & PATH_DIRECTORY);
 }
 
 bool
 UnionfsCstore::path_is_regular(const char *path)
 {
-  fs::file_status result;
-  if (!get_file_status(path, result)) {
-    return false;
-  }
-  return fs::is_regular_file(result);
+  return (get_path_flags(path) & PATH_REGULAR);
 }
 
 bool
