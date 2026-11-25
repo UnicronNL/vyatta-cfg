@@ -80,6 +80,7 @@ private:
   static const string C_MARKER_CHANGED;
   static const string C_MARKER_UNSAVED;
   static const string C_COMMITTED_MARKER_FILE;
+  static const string C_VALIDATED_FILE;
   static const string C_COMMENT_FILE;
   static const string C_TAG_NAME;
   static const string C_VAL_NAME;
@@ -132,13 +133,21 @@ private:
   FsPath tmp_active_root;
   FsPath tmp_work_root;
   FsPath commit_marker_file;
+  /* values that passed validation in this session, one "path<TAB>value"
+   * per line (see mark_value_validated()).
+   */
+  FsPath validated_file;
+  MapT<string, bool> _validated_values;
+  bool _validated_values_loaded = false;
   void init_commit_data() {
     tmp_active_root = tmp_root;
     tmp_work_root = tmp_root;
     commit_marker_file = tmp_root;
+    validated_file = tmp_root;
     tmp_active_root.push("active");
     tmp_work_root.push("work");
     commit_marker_file.push(C_COMMITTED_MARKER_FILE);
+    validated_file.push(C_VALIDATED_FILE);
   }
   bool construct_commit_active(commit::PrioNode& node);
   bool mark_dir_changed(const FsPath& d, const FsPath& root);
@@ -259,6 +268,9 @@ private:
   bool cfg_node_exists(bool active_cfg);
   bool read_value_vec(vector<string>& vvec, bool active_cfg);
   bool marked_deactivated(bool active_cfg);
+  void mark_value_validated(const char *value);
+  bool value_validated(const char *value);
+  void clear_validated_values();
   bool get_comment(string& comment, bool active_cfg);
   bool marked_display_default(bool active_cfg);
 

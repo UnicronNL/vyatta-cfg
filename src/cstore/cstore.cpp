@@ -1956,6 +1956,20 @@ Cstore::unmarkCfgPathDeactivated(const Cpath& path_comps)
   return (unmark_deactivated() && mark_changed_with_ancestors());
 }
 
+// whether specified value of specified node passed validation in this session
+bool
+Cstore::cfgPathValueValidated(const Cpath& path_comps, const char *value)
+{
+  #if __GNUC__ < 6
+  auto_ptr<SavePaths> save(create_save_paths());
+  #else
+  unique_ptr<SavePaths> save(create_save_paths());
+  #endif
+  reset_paths();
+  append_cfg_path(path_comps);
+  return value_validated(value);
+}
+
 // load specified config file
 bool
 Cstore::loadFile(const char *filename)
@@ -2258,6 +2272,36 @@ Cstore::append_tmpl_path(const Cpath& path_comps, bool& is_tag)
 typedef MapT<Cpath, tr1::shared_ptr<Ctemplate>, CpathHash> TmplCacheT;
 static TmplCacheT _tmpl_cache;
 
+/* whether validation of a tag value on the way to a deeper path can be
+ * skipped because the tag value already exists in the config.
+ *
+ * validating an existing tag value again for every node set below it (one
+ * or more processes each time) doesn't decide anything: if it is in the
+ * active config it has passed validation, and if it is only in the working
+ * config it was either validated when it was set or, if it came from
+ * "load" (which doesn't validate), it is validated when it is committed.
+ * e.g., when setting
+ *   firewall ipv4 name FOO rule 10 action accept
+ * "FOO" and "10" are validated when they are created, not again for each
+ * of the values set under them.
+ *
+ *   cfg_path_in_sync: whether the current cfg path is at the tag node.
+ *                     (not the case when get_parsed_tmpl() "borrows" path
+ *                     components from the template path.)
+ *   value: the tag value.
+ */
+bool
+Cstore::tag_value_already_valid(bool cfg_path_in_sync, const char *value)
+{
+  if (!cfg_path_in_sync) {
+    return false;
+  }
+  push_cfg_path(value);
+  bool ret = cfg_node_exists(!inSession());
+  pop_cfg_path();
+  return ret;
+}
+
 /* check whether specified "logical path" is valid template path.
  * then template at the path is parsed.
  *   path_comps: path components.
@@ -2348,7 +2392,9 @@ Cstore::get_parsed_tmpl(const Cpath& path_comps, bool validate_vals,
       }
       bool is_tag;
       if (append_tmpl_path((*pcomps)[i], is_tag)) {
-        if (is_tag && validate_vals) {
+        if (is_tag && validate_vals
+            && !tag_value_already_valid(pcomps == &path_comps,
+                                        (*pcomps)[i])) {
           /* last comp is tag and want to validate value.
            * note: validate_val() will use the current tmpl path and cfg path.
            *       so need both at the "node" level before calling it.
@@ -2357,7 +2403,7 @@ Cstore::get_parsed_tmpl(const Cpath& path_comps, bool validate_vals,
            */
           pop_tmpl_path();
           tr1::shared_ptr<Ctemplate> ttmpl(tmpl_parse());
-          if (!validate_val(ttmpl, (*pcomps)[i])) {
+          if (!validate_val(ttmpl, (*pcomps)[i], pcomps == &path_comps)) {
             // invalid value
             error = "Value validation failed";
             valid = false;
@@ -2392,7 +2438,8 @@ Cstore::get_parsed_tmpl(const Cpath& path_comps, bool validate_vals,
           // case (2). last component is "value".
           if (validate_vals) {
             // validate value
-            if (!validate_val(ttmpl, (*pcomps)[pcomps->size() - 1])) {
+            if (!validate_val(ttmpl, (*pcomps)[pcomps->size() - 1],
+                              pcomps == &path_comps)) {
               // invalid value
               error = "Value validation failed";
               break;
@@ -2936,9 +2983,13 @@ Cstore::cfg_value_exists(const string& value, bool active_cfg)
  * return true if valid. otherwise return false.
  * note: current template and cfg paths both point to the node,
  *       not the value.
+ *   record: whether a successful validation may be recorded for the node
+ *           at the current cfg path (see mark_value_validated()). pass
+ *           false if the cfg path is not at the node.
  */
 bool
-Cstore::validate_val(const tr1::shared_ptr<Ctemplate>& def, const char *value)
+Cstore::validate_val(const tr1::shared_ptr<Ctemplate>& def, const char *value,
+                     bool record)
 {
   if (!def.get()) {
     exit_internal("validate_val: no tmpl [%s]\n", tmpl_path_to_str().c_str());
@@ -2958,6 +3009,9 @@ Cstore::validate_val(const tr1::shared_ptr<Ctemplate>& def, const char *value)
   bool ret = validate_value(def->getDef(), vbuf.get());
   var_ref_handle = NULL;
 
+  if (ret && record) {
+    mark_value_validated(value);
+  }
   return ret;
 }
 

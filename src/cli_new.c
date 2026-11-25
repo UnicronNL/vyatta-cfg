@@ -258,6 +258,66 @@ get_syntax_self_in_valstruct(const vtw_node *vnode)
   return ret;
 }
 
+/* whether every variable reference in the string is "$VAR(@)" */
+static boolean
+only_self_var_refs(const char *str)
+{
+  const char *p = str;
+  if (!p) {
+    return TRUE;
+  }
+  while ((p = strstr(p, VAR_REF_MARKER)) != NULL) {
+    if (strncmp(p, VAR_REF_SELF_MARKER, VAR_REF_SELF_MARKER_LEN) != 0) {
+      return FALSE;
+    }
+    p += VAR_REF_SELF_MARKER_LEN;
+  }
+  return TRUE;
+}
+
+/* whether the specified "syntax" action tree depends on nothing but the
+ * node's own value, i.e., it has no "commit:expression" entries, no
+ * assignments or backquotes, and every variable reference is "$VAR(@)".
+ *
+ * such a check gives the same answer every time it is run on the same
+ * value. commit uses this to avoid repeating a check that the value is
+ * known to have passed already (see _commit_check_cfg_node()).
+ */
+boolean
+syntax_is_self_contained(const vtw_node *vnode)
+{
+  int i;
+  if (!vnode) {
+    return TRUE;
+  }
+  switch (vnode->vtw_node_oper) {
+  case LIST_OP:
+    if (vnode->vtw_node_aux) {
+      // "commit:expression" entry: only evaluated during commit
+      return FALSE;
+    }
+    break;
+  case ASSIGN_OP:
+  case B_QUOTE_OP:
+    return FALSE;
+  default:
+    break;
+  }
+  if (!only_self_var_refs(vnode->vtw_node_string)
+      || !only_self_var_refs(vnode->vtw_node_val.val)) {
+    return FALSE;
+  }
+  if (vnode->vtw_node_val.vals) {
+    for (i = 0; i < vnode->vtw_node_val.cnt; i++) {
+      if (!only_self_var_refs(vnode->vtw_node_val.vals[i])) {
+        return FALSE;
+      }
+    }
+  }
+  return (syntax_is_self_contained(vnode->vtw_node_left)
+          && syntax_is_self_contained(vnode->vtw_node_right));
+}
+
 /* execute specified command and return output in specified buffer as
  * a null-terminated string. return number of characters in the output
  * or -1 if failed.

@@ -440,10 +440,15 @@ _exec_node_actions(Cstore& cs, CfgNode& node, vtw_act_type act,
  * passes.
  *
  * see comment for _exec_node_actions() above about clist.
+ *
+ * skip_validated: in the syntax pass, don't run the actions for values that
+ *                 are recorded as having passed them already. (the caller
+ *                 has to make sure the actions are self-contained.)
  */
 static bool
 _exec_multi_node_actions(Cstore& cs, const CfgNode& node, vtw_act_type act,
-                         CommittedPathListT *clist = NULL)
+                         CommittedPathListT *clist = NULL,
+                         bool skip_validated = false)
 {
   if (!node.isMulti()) {
     // fail if this is called with a non-multi node
@@ -488,6 +493,10 @@ _exec_multi_node_actions(Cstore& cs, const CfgNode& node, vtw_act_type act,
     if (act == syntax_act) {
       // syntax pass
       if (s != COMMIT_STATE_ADDED) {
+        continue;
+      }
+      if (skip_validated && cs.cfgPathValueValidated(pcomps, v.c_str())) {
+        // already passed this (self-contained) check when it was set
         continue;
       }
       if (!_exec_tmpl_actions(cs, s, at_str.get(), pcomps, *(pdisp.get()),
@@ -548,6 +557,49 @@ _set_commit_subtree_changed(CfgNode& node)
   }
 }
 
+/* running the "syntax" actions of a node during commit repeats the check
+ * that "set" already did when the value was entered, and for a large change
+ * it is most of the commit time (one or more processes per value). it can be
+ * skipped when both of these hold:
+ *
+ *   (1) the check only depends on the node's own value (no "commit:"
+ *       expressions, no references to other nodes), so it gives the same
+ *       answer every time, and
+ *   (2) the value is known to have passed it: either it was recorded when
+ *       it was validated in this session (Cstore::cfgPathValueValidated()),
+ *       or the node is unchanged, i.e., it is in the active config, which
+ *       only contains values that passed.
+ *
+ * values that got into the working config without being validated, e.g.,
+ * from "load" or the boot config, are not recorded, so they are still
+ * checked here.
+ */
+static bool
+_syntax_is_self_contained(const CfgNode& node)
+{
+  const vtw_node *actions = node.getActions(syntax_act);
+  return (!actions || syntax_is_self_contained(actions));
+}
+
+// whether the value of a (non-multi) node being committed is recorded as valid
+static bool
+_commit_value_validated(Cstore& cs, const CfgNode& node)
+{
+  // the record is keyed by the path of the node (without value) + value
+  Cpath pcomps(node.getCommitPath());
+  string val;
+  if (node.isLeaf()) {
+    val = ((node.getCommitState() == COMMIT_STATE_CHANGED)
+           ? node.commitValueAfter() : node.getValue());
+  } else if (node.isValue()) {
+    // tag value
+    val = node.getValue();
+    pcomps.pop();
+  }
+  // else typeless node, which "set" validates with an empty value
+  return cs.cfgPathValueValidated(pcomps, val.c_str());
+}
+
 static bool
 _commit_check_cfg_node(Cstore& cs, CfgNode *node, CommittedPathListT& clist)
 {
@@ -555,10 +607,15 @@ _commit_check_cfg_node(Cstore& cs, CfgNode *node, CommittedPathListT& clist)
   _commit_tree_traversal(node, false, PRE_ORDER, nodelist, true);
   for (size_t i = 0; i < nodelist.size(); i++) {
     CommitState s = nodelist[i]->getCommitState();
+    bool self_contained = _syntax_is_self_contained(*(nodelist[i]));
     if (s == COMMIT_STATE_UNCHANGED) {
       // check if an immediate child node has changed.
       // if so do the syntax act here
       // This puts back the pre-larkspur behavior that features expect to happen.
+      if (self_contained) {
+        // the node's own value is unchanged, so the check can't fail
+        continue;
+      }
       vector <CfgNode *> childNodes;
       childNodes = nodelist[i]->getChildNodes();
       for (size_t j = 0; j < childNodes.size(); j++){
@@ -576,7 +633,8 @@ _commit_check_cfg_node(Cstore& cs, CfgNode *node, CommittedPathListT& clist)
     if (nodelist[i]->isMulti()) {
       // for committed list processing, use top_act as dummy value
       _exec_multi_node_actions(cs, *(nodelist[i]), top_act, &clist);
-      if (!_exec_multi_node_actions(cs, *(nodelist[i]), syntax_act)) {
+      if (!_exec_multi_node_actions(cs, *(nodelist[i]), syntax_act, NULL,
+                                    self_contained)) {
         return false;
       }
       continue;
@@ -586,6 +644,9 @@ _commit_check_cfg_node(Cstore& cs, CfgNode *node, CommittedPathListT& clist)
       _exec_node_actions(cs, *(nodelist[i]), top_act, &clist);
     }
     if (s == COMMIT_STATE_CHANGED || s == COMMIT_STATE_ADDED) {
+      if (self_contained && _commit_value_validated(cs, *(nodelist[i]))) {
+        continue;
+      }
       if (!_exec_node_actions(cs, *(nodelist[i]), syntax_act)) {
         return false;
       }

@@ -184,6 +184,11 @@ public:
                           const Cpath& disp_path, const vtw_node *actions,
                           const vtw_def *def);
   bool cfgPathMarkedCommitted(const Cpath& path_comps, bool is_delete);
+  /* whether "value" at the node "path_comps" (path of the node, not
+   * including the value) is known to have passed validation, i.e., the
+   * node's syntax actions, in this session. see mark_value_validated().
+   */
+  bool cfgPathValueValidated(const Cpath& path_comps, const char *value);
   bool markCfgPathCommitted(const Cpath& path_comps, bool is_delete);
   virtual bool clearCommittedMarkers() = 0;
   virtual bool commitConfig(commit::PrioNode& pnode) = 0;
@@ -397,6 +402,15 @@ private:
   virtual bool read_value_vec(vector<string>& vvec, bool active_cfg) = 0;
   virtual bool cfg_node_exists(bool active_cfg) = 0;
   virtual bool marked_deactivated(bool active_cfg) = 0;
+  /* record of values that passed validation in this session, so that
+   * commit doesn't have to run the same syntax actions on them again.
+   * both functions refer to the node at the current cfg path.
+   *   mark_value_validated(): remember that "value" passed validation.
+   *   value_validated(): whether "value" was remembered.
+   * an implementation that doesn't keep a record just validates at commit.
+   */
+  virtual void mark_value_validated(const char *value) {};
+  virtual bool value_validated(const char *value) { return false; };
   virtual bool get_comment(string& comment, bool active_cfg) = 0;
   virtual bool marked_display_default(bool active_cfg) = 0;
 
@@ -512,7 +526,9 @@ private:
   bool cfg_value_exists(const string& value, bool active_cfg);
 
   // these operate on both current tmpl and work paths
-  bool validate_val(const tr1::shared_ptr<Ctemplate>& def, const char *value);
+  bool validate_val(const tr1::shared_ptr<Ctemplate>& def, const char *value,
+                    bool record = true);
+  bool tag_value_already_valid(bool cfg_path_in_sync, const char *value);
   bool create_default_children(const Cpath& path_comps); /* this requires
     * path_comps but DOES operate on current work path.
     */

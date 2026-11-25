@@ -92,6 +92,7 @@ const string UnionfsCstore::C_MARKER_DEACTIVATE = ".disable";
 const string UnionfsCstore::C_MARKER_CHANGED = ".modified";
 const string UnionfsCstore::C_MARKER_UNSAVED = ".unsaved";
 const string UnionfsCstore::C_COMMITTED_MARKER_FILE = ".changes";
+const string UnionfsCstore::C_VALIDATED_FILE = ".validated";
 const string UnionfsCstore::C_COMMENT_FILE = ".comment";
 const string UnionfsCstore::C_TAG_NAME = "node.tag";
 const string UnionfsCstore::C_VAL_NAME = "node.val";
@@ -1495,6 +1496,10 @@ UnionfsCstore::commitConfig(commit::PrioNode& node)
   } catch (const fs::filesystem_error& e) {
     output_internal("failed to remove temp directories [%s]\n", e.what());
   }
+  /* what was committed is in the active config now, and anything that
+   * failed is simply validated again by the next commit.
+   */
+  clear_validated_values();
   // without the lock a refresh may be moving a session onto one of them
   if ((trees = lock_trees()) >= 0) {
     remove_unused_active_trees();
@@ -2065,6 +2070,70 @@ UnionfsCstore::remove_comment()
   return true;
 }
 
+/* remember that "value" of the node at the current cfg path passed
+ * validation. the record is a file in the session's temp dir, since the
+ * value is usually validated by one process ("set") and committed by
+ * another. it is only ever added to when a validation actually ran and
+ * succeeded, so a value that got into the working config some other way
+ * (e.g., "load", which does not validate) is not in it.
+ */
+void
+UnionfsCstore::mark_value_validated(const char *value)
+{
+  if (validated_file.length() == 0 || !inSession()
+      || strchr(value, '\n')) {
+    return;
+  }
+  string line = mutable_cfg_path.path_cstr();
+  line += "\t";
+  line += value;
+  line += "\n";
+  int fd = open(validated_file.path_cstr(),
+                O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0664);
+  if (fd < 0) {
+    // not fatal: the value is then validated again during commit
+    return;
+  }
+  // one write() in append mode, so concurrent writers don't interleave
+  if (write(fd, line.c_str(), line.size()) == (ssize_t) line.size()) {
+    _validated_values[line] = true;
+  }
+  close(fd);
+}
+
+// forget all recorded values (keeps the record from growing forever)
+void
+UnionfsCstore::clear_validated_values()
+{
+  if (validated_file.length() > 0) {
+    unlink(validated_file.path_cstr());
+  }
+  _validated_values.clear();
+  _validated_values_loaded = false;
+}
+
+// whether "value" of the node at the current cfg path is in the record
+bool
+UnionfsCstore::value_validated(const char *value)
+{
+  if (validated_file.length() == 0) {
+    return false;
+  }
+  if (!_validated_values_loaded) {
+    _validated_values_loaded = true;
+    std::ifstream fin(validated_file.path_cstr());
+    string line;
+    while (getline(fin, line)) {
+      _validated_values[line + "\n"] = true;
+    }
+  }
+  string line = mutable_cfg_path.path_cstr();
+  line += "\t";
+  line += value;
+  line += "\n";
+  return (_validated_values.find(line) != _validated_values.end());
+}
+
 // set comment at the current work path
 bool
 UnionfsCstore::set_comment(const string& comment)
@@ -2117,6 +2186,7 @@ UnionfsCstore::discard_changes(unsigned long long& num_removed)
     output_internal("discard failed [%s]\n", change_root.path_cstr());
     return invalidate_session("discard");
   }
+  clear_validated_values();
 
   if (unsaved) {
     /* restore unsaved marker. must happen after the remount: the marker is

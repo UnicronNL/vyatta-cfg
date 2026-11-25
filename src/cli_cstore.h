@@ -128,6 +128,7 @@ extern FILE *err_stream;
 
 /* functions */
 const valstruct *get_syntax_self_in_valstruct(const vtw_node *vnode);
+boolean syntax_is_self_contained(const vtw_node *vnode);
 int get_shell_command_output(const char *cmd, char *buf,
                              unsigned int buf_size);
 int parse_def(vtw_def *defp, const char *path, boolean type_only);
